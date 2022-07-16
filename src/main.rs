@@ -80,8 +80,8 @@ fn livery_search(t: mlua::Table, liveries: &mut Liveries, name: String) -> Resul
                 let mut name = name.clone();
                 name.push('.');
                 match k {
-                    mlua::Value::String(s) => name.push_str(&s.to_string_lossy()),
-                    mlua::Value::Integer(i) => name.push_str(&format!("{i}")),
+                    mlua::Value::String(s) => name += &s.to_string_lossy(),
+                    mlua::Value::Integer(i) => name += &i.to_string(),
                     _ => unreachable!(),
                 };
                 livery_search(t, liveries, name)?;
