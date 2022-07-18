@@ -1,8 +1,9 @@
 mod logsetup;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::Parser;
+use lazy_static::lazy_static;
 use log::*;
 use memmap::Mmap;
 use mlua::Lua;
@@ -23,17 +24,37 @@ struct Args {
 
     /// The directory containing the previous BMS config
     mission: Utf8PathBuf,
+
+    /// The DCS directory (TODO optional & load via registry)
+    #[clap(short, long)]
+    dcs: Utf8PathBuf
 }
 
 fn run() -> Result<()> {
     let args = Args::parse();
     logsetup::init_logger(args.verbose, args.color);
 
-    parse_liveries(&args.mission)?;
-    Ok(())
+    let needed = parse_mission_liveries(&args.mission)?;
+    let stock = find_stock_liveries(&args.dcs)?;
+
+    let mut missing_liveries = false;
+
+    for (vic, liveries) in needed {
+        match stock.get(&vic) {
+            Some(stock_liveries) => {
+            },
+            None => error!("Couldn't find ANY stock liveries for {vic}"),
+        };
+    }
+
+    if missing_liveries {
+        bail!("Missing liveries!");
+    } else {
+        Ok(())
+    }
 }
 
-fn parse_liveries(miz: &Utf8Path) -> Result<()> {
+fn parse_mission_liveries(miz: &Utf8Path) -> Result<Liveries> {
     let miz = map_miz(miz)?;
 
     let lua = Lua::new();
@@ -50,14 +71,11 @@ fn parse_liveries(miz: &Utf8Path) -> Result<()> {
     for coalition in loaded_miz.pairs::<mlua::String, mlua::Table>() {
         let (k, v) = coalition?;
         let k = k.to_string_lossy().to_string();
-        livery_search(v, &mut liveries, k.clone())
+        lua_livery_search(v, &mut liveries, k.clone())
             .with_context(|| format!("Couldn't parse {k} coalition"))?;
     }
 
-    println!("Required liveries:");
-    println!("{liveries:#?}");
-
-    Ok(())
+    Ok(liveries)
 }
 
 fn map_miz(p: &Utf8Path) -> Result<Mmap> {
@@ -65,7 +83,7 @@ fn map_miz(p: &Utf8Path) -> Result<Mmap> {
     unsafe { Mmap::map(&fd) }.context("Couldn't map MIZ file")
 }
 
-fn livery_search(t: mlua::Table, liveries: &mut Liveries, name: String) -> Result<()> {
+fn lua_livery_search(t: mlua::Table, liveries: &mut Liveries, name: String) -> Result<()> {
     trace!("Searching {name}");
     let livery_id: mlua::Value = t.get("livery_id")?;
     let unit_type: mlua::Value = t.get("type")?;
@@ -84,8 +102,52 @@ fn livery_search(t: mlua::Table, liveries: &mut Liveries, name: String) -> Resul
                     mlua::Value::Integer(i) => name += &i.to_string(),
                     _ => unreachable!(),
                 };
-                livery_search(t, liveries, name)?;
+                lua_livery_search(t, liveries, name)?;
             }
+        }
+    }
+    Ok(())
+}
+
+fn find_stock_liveries(dcs: &Utf8Path) -> Result<Liveries> {
+    let mut liveries = Liveries::new();
+    dir_livery_search(dcs, &mut liveries)?;
+    Ok(liveries)
+}
+
+fn dir_livery_search(dir: &Utf8Path, liveries: &mut Liveries) -> Result<()> {
+    if !dir.is_dir() {
+        return Ok(())
+    }
+
+    lazy_static! {
+        static ref SOME_LIVERIES: Option<String> = Some("liveries".to_string());
+    }
+
+    if dir.file_name().map(|f| f.to_lowercase()) == *SOME_LIVERIES {
+        trace!("Searching {dir} for stock liveries");
+        for v in dir.read_dir_utf8()? {
+            let v = v?;
+            let v = v.path();
+            if !v.is_dir() {
+                continue;
+            }
+            let vehicle = v.file_name().unwrap().to_lowercase();
+            trace!("\tFor {vehicle} found:");
+            for l in v.read_dir_utf8()? {
+                let l = l?;
+                let l = l.path();
+                if l.is_dir() {
+                    let livery = l.file_name().unwrap().to_lowercase();
+                    trace!("\t\t{livery}");
+                    liveries.entry(vehicle.clone()).or_default().insert(livery);
+                }
+            }
+        }
+    } else {
+        for e in dir.read_dir_utf8()? {
+            let e = e?;
+            dir_livery_search(e.path(), liveries)?;
         }
     }
     Ok(())

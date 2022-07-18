@@ -13,6 +13,7 @@ anyhow = { version = "1.0", features = ["backtrace"] }
 atty = "0.2"
 camino = "1.0"
 clap = { version = "3.2", features = ["derive"] }
+lazy_static = "1.4.0"
 log = "0.4"
 memmap = "0.7.0"
 mlua = { version = "0.8", features = ["lua54"] }
